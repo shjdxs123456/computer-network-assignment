@@ -35,6 +35,21 @@ CONNECTING ──TCP 建立──> AUTH ──hello_ok──> READY ──超时
                             └──hello_reject──> CLOSED
 ```
 
+### 2.1 设备发现（UDP 广播，解决"手机不知道电脑 IP"）
+
+AP 隔离下手机和电脑互不可达，改用「手机开热点」后网络通了，但电脑 IP 每次连热点都会变，手动填太麻烦。所以加一条**自动发现**通道：手机广播"谁在？"，电脑单播回"我是电脑，IP 和端口是 xxx"。
+
+发现用 UDP 而数据用 TCP 不矛盾：发现是"一问一答、允许丢失"（发几次收到一次即可），UDP 广播正合适；数据要求可靠有序，仍走 TCP。
+
+| 项 | 值 |
+| --- | --- |
+| 发现端口 | UDP `8766`（与 TCP 数据端口 8765 分开） |
+| 请求方向 | 手机 → 广播地址 `255.255.255.255` 发 `discover` |
+| 响应方向 | 电脑 → 单播回请求来源，发 `discover_ok` |
+| 报文格式 | 纯 UTF-8 JSON，**不带长度前缀**（UDP 数据报自带边界，无需处理粘包） |
+
+> 发现只在「手机热点 / 普通家用 WiFi」这类**没有 AP 隔离**的网络里有效；校园网 AP 隔离下广播被屏蔽，仍需走「手机开热点」。
+
 ---
 
 ## 3. 应用层帧格式
@@ -76,6 +91,8 @@ CONNECTING ──TCP 建立──> AUTH ──hello_ok──> READY ──超时
 | M7 | 手机→电脑 | `pause_ack` | 执行 `pause_cmd` 后（含回读结果） | 每条命令 1 条 |
 | M8 | 双向 | `ping` / `pong` | 定时 | 每 3 秒 |
 | M9 | 双向 | `error` | 收到无法解析 / 越权报文 | 异常时 |
+| M10 | 手机→电脑 | `discover` | App 启动 / 用户点"刷新"，广播找电脑（UDP） | 每次发现连发数次 |
+| M11 | 电脑→手机 | `discover_ok` | 收到 `discover` 后单播回复（UDP） | 每条 discover 回 1 条 |
 
 **公共字段**（所有消息都带）
 
@@ -189,6 +206,28 @@ CONNECTING ──TCP 建立──> AUTH ──hello_ok──> READY ──超时
 
 > 收到 `error` 不重连、不重试；`BAD_FRAME` / `TOO_LARGE` 之后直接断开（对端已经不可信）。
 
+### M10 `discover`（UDP 广播）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `type` | string | `"discover"` |
+| `v` | int | 协议版本，同 `hello` |
+| `from_ip` | string | 手机自己的 IP（`127.0.0.1` 之外的第一个 IPv4），电脑用它选同网段 IP |
+
+发送方式：`socket` 设为 `SO_BROADCAST`，`sendto` 到 `255.255.255.255:8766`，**连发 3 次**（间隔 200ms，UDP 无保证）。纯 UTF-8 JSON，**不带长度前缀**（与 TCP 帧不同）。
+
+### M11 `discover_ok`（UDP 单播）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `type` | string | `"discover_ok"` |
+| `v` | int | 协议版本 |
+| `ip` | string | 电脑侧选出的、与手机同网段的 IP，手机用它建 TCP |
+| `port` | int | 电脑 TCP 端口（8765） |
+| `server_name` | string | 电脑名，用于手机上展示"找到了 X 的电脑" |
+
+电脑收到 `discover` 后，从本机所有 IPv4 里选一个与 `from_ip` 同 /24 网段的地址回复；找不到同网段就回默认 IP。收到后手机仍要用户填 `pair_code`，再走 6.1 的 TCP 建连。
+
 ---
 
 ## 6. 时序
@@ -265,6 +304,9 @@ CONNECTING ──TCP 建立──> AUTH ──hello_ok──> READY ──超时
 | --- | --- | --- |
 | 协议版本 `PROTO_VER` | 1 | protocol.py |
 | 默认端口 | 8765 | priority.json `server.port` |
+| 发现端口 `DISCOVERY_PORT` | 8766 | protocol.py（UDP 广播发现） |
+| discover 连发次数 | 3 次 | 手机端 |
+| discover 连发间隔 | 200 毫秒 | 手机端 |
 | 最长帧 | 65535 字节 | protocol.py |
 | 心跳周期 | 3 秒 | 服务端下发 |
 | 心跳超时 | 6 秒 | server.py |

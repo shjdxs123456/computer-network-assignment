@@ -28,6 +28,7 @@ import time
 # ---------- 常量（与 protocol.md 第 8 节一一对应） ----------
 PROTO_VER = 1          # 协议版本，hello 校验时比对
 DEFAULT_PORT = 8765    # 默认监听端口（实际以 priority.json 的 server.port 为准）
+DISCOVERY_PORT = 8766  # UDP 自动发现端口：手机广播 discover，电脑回 discover_ok
 MAX_FRAME_BYTES = 65535  # 单帧正文最大字节数，超过视为畸形包
 HEARTBEAT_S = 3        # 心跳周期（秒）：每 3 秒发一次 ping
 HEARTBEAT_TIMEOUT_S = 6  # 心跳超时（秒）：连续 6 秒没收到对端任何报文判离线
