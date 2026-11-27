@@ -1,0 +1,10 @@
+# 电脑端依赖清单（conda 环境 lanchat 中已安装）
+# 安装方式：pip install -r requirements.txt
+#
+# pycaw     封装 Windows Core Audio (WASAPI)，用于枚举音频会话、静音
+# comtypes  pycaw 的底层依赖，用于调用 Windows COM 组件
+# winsdk    微软官方 WinRT API 的 Python 绑定，用于 SMTC 让播放器真正暂停
+#           实测可用版本 1.0.0b10（若装不上下面的裸包名，可指定 winsdk==1.0.0b10）
+pycaw
+comtypes
+winsdk

@@ -1,0 +1,28 @@
+{
+  "server": {
+    "port": 8765,
+    "pair_code": "123456"
+  },
+  "rules": [
+    {
+      "device": "pc",
+      "app": "NeteaseCloudMusic.exe",
+      "priority": 10
+    },
+    {
+      "device": "pc",
+      "app": "chrome.exe",
+      "priority": 5
+    },
+    {
+      "device": "phone",
+      "app": "com.netease.cloudmusic",
+      "priority": 20
+    },
+    {
+      "device": "phone",
+      "app": "tv.danmaku.bili",
+      "priority": 15
+    }
+  ]
+}
