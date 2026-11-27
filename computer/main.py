@@ -13,8 +13,9 @@
     - 主线程（本文件）：每秒做一次"看电脑在播什么 → 决策 → 执行"，不被网络阻塞。
 
 本文件包含：
-    get_local_ip()       估算本机在 WiFi 里的 IP（给手机填）
-    print_banner()       打印启动信息
+    get_local_ip()       估算本机"对外出口"的 IP（作为推荐值给手机填）
+    get_all_local_ips()  列出本机所有非回环 IPv4（手机开热点/多网卡时供对照挑选）
+    print_banner()       打印启动信息（IP、端口、配对码、热点操作提示）
     pause_pc_playback()  让电脑侧正在出声的播放器暂停（决策为 phone 时的动作）
     apply_decision()     根据决策结果执行实际动作（暂停电脑 / 下发手机暂停 / 恢复）
     main()               入口：串起整个调度循环
@@ -56,14 +57,45 @@ def get_local_ip() -> str:
         sock.close()
 
 
+def get_all_local_ips() -> list[str]:
+    """列出本机所有非回环 IPv4 地址，供手机对照选择。
+
+    为什么需要它：
+        电脑可能同时有多张网卡（有线网 + 连手机热点的 WiFi），
+        get_local_ip() 用"出口路由"猜的那个 IP 未必是手机能连到的那个
+        （比如默认路由走有线网，猜出来的就是有线网 IP，手机在热点网段根本连不到）。
+        把所有 IP 都列出来让用户对照，最不容易填错。
+
+    返回（list[str]）：
+        去重、排序后的 IPv4 列表（不含 127.x）；取不到时返回空列表。
+    """
+    ips: set[str] = set()
+    try:
+        # 用主机名反查所有 IPv4 地址。Windows 上通常会返回每张网卡的 IP。
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                ips.add(ip)
+    except OSError:
+        pass
+    return sorted(ips)
+
+
 def print_banner(config: dict) -> None:
-    """打印启动信息：本机 IP、端口、配对码。"""
-    ip = get_local_ip()
+    """打印启动信息：本机 IP、端口、配对码，以及热点连接的操作提示。"""
+    recommended = get_local_ip()
+    all_ips = get_all_local_ips()
     print("=" * 56)
     print("蓝牙耳机跨设备智能调度系统 —— 电脑端")
-    print(f"  本机 IP（手机端填这个）：{ip}")
+    print(f"  推荐 IP（一般填这个）：{recommended}")
+    if all_ips:
+        print(f"  本机所有 IP：{', '.join(all_ips)}")
     print(f"  端口：{config['port']}        配对码：{config['pair_code']}")
-    print("  若手机连不上：用 ipconfig 确认无线网卡 IP，并放行防火墙")
+    print("  【学校网络有 AP 隔离，用手机开热点连】")
+    print("    1. 手机先开热点，电脑的 WiFi 连上手机热点")
+    print("    2. 再启动本程序，手机端填「连热点后新出现的 IP」")
+    print("       （通常是 192.168.43.x 这类热点网段）")
+    print("    3. 仍连不上就用 ipconfig 看「无线局域网适配器」的 IPv4")
     print("  按 Ctrl+C 退出（会自动恢复所有静音）")
     print("=" * 56)
 
