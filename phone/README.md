@@ -13,7 +13,7 @@
 | 电脑（TCP 服务端） | 监听 8765 端口，做决策，下发"该谁播 / 暂停谁" |
 | 手机（TCP 客户端） | 主动连电脑，上报播放状态，收到暂停指令就暂停对应 App |
 
-手机是"被指挥的一方"：只上报、只执行，不参与决策。
+手机是"被指挥的一方"：只上报、只执行，不参与决策。其中"读播放状态"和"暂停 App"在现代 Android 上要借助 **Shizuku** 获得 shell 权限来做（见第 7 节），网络通信部分不受影响。
 
 ---
 
@@ -125,7 +125,7 @@
 | `package` | string | 正在播放的包名；`playing=false` 时传空串 `""` |
 | `app_name` | string | App 显示名，只日志/界面用 |
 | `state_code` | int | Android `PlaybackState` 常量，见下方取值 |
-| `has_control` | bool | 该 App 能否下发暂停（拿得到 `TransportControls`） |
+| `has_control` | bool | 能否下发暂停（Shizuku shell 权限可用，且当前会话可派发暂停） |
 
 `state_code` 取值（直接透传 Android 常量）：
 
@@ -140,7 +140,7 @@
 
 **上报节奏（必须遵守，否则电脑会误判）**：
 
-1. 每 1 秒轮询一次 MediaSession，**状态与上次不同就立即发**。
+1. 每 1 秒用 shell 命令（`cmd media_session list-sessions`）查一次当前媒体会话，**状态与上次不同就立即发**。
 2. **即使没变化，也每 1 秒发一次兜底**——电脑靠这个区分"手机没在播"和"手机掉线了"。
 3. 限速：200ms 内最多发 1 条，避免某个 App 频繁抖动刷屏。
 4. `playing=true` 的判定：`state_code == 3` 连续读到 2 次（约 2 秒）才认定在播，避免一秒内的提示音误触发。
@@ -228,7 +228,7 @@
 | `package` | 要暂停的包名 |
 | `reason` | 固定 `PC_WINS`，预留扩展 |
 
-收到后：对该包名的 MediaSession 调 `transportControls.pause()`，回读状态，然后回 `pause_ack`。**同一个 `cmd_id` 只执行一次**（去重），重复收到仍要回 ack。
+收到后：用 shell 权限执行 `cmd media_session dispatch pause`（见第 7 节），回读状态确认已暂停，然后回 `pause_ack`。**同一个 `cmd_id` 只执行一次**（去重），重复收到仍要回 ack。
 
 ### 4.5 `ping` —— 心跳探活（每 3 秒）
 
@@ -305,9 +305,43 @@
 
 ---
 
-## 7. 手机端硬性前提（Android 权限）
+## 7. 手机端读取/控制播放的实现（Shizuku 免 root 方案）
 
-读 MediaSession 必须拿到 **通知使用权**，否则一个播放器都读不到。手机端要引导用户去系统设置里开启，并关闭该 App 的电池优化（否则后台监听会被杀）。Android 14 起前台服务还要声明服务类型（写服务时一并处理）。
+### 7.0 为什么不能直接用 MediaSession API
+
+Android 13（API 33）起，普通 App 调用 `MediaController.getTransportControls().pause()` 去暂停**别的 App** 的播放，需要系统级权限 `android.permission.MEDIA_CONTENT_CONTROL`。这个权限是 `signature|privileged` 级别，普通 App 拿不到（只有系统应用 / 已 root / adb 开发调试临时授予才可能）。所以"直接暂停第三方 App"这条路在现代 Android 上被堵死。
+
+### 7.1 换一条路：拿到 shell 权限，用系统命令读和控
+
+**Shizuku** 是一个开源、免 root 的工具：它通过手机的「无线调试」授权，让普通 App 获得 **shell（uid 2000）权限**。有了 shell 权限，App 不直接调 `TransportControls`，而是执行**系统命令**，让系统自己去读状态、派发暂停——完全绕开 `MEDIA_CONTENT_CONTROL` 的限制。
+
+| 要做的事 | shell 命令 | 说明 |
+| --- | --- | --- |
+| 读"当前在播什么" | `cmd media_session list-sessions` / `dumpsys media_session` | 拿到当前活跃媒体会话的包名和播放状态 |
+| 暂停当前播放的 App | `cmd media_session dispatch pause` | 等价按一下耳机暂停键，系统把"暂停"派发给当前出声的 App；也可用 `input keyevent 127` |
+
+> `media_session dispatch KEY` 是官方命令（KEY 可取 play / pause / play-pause / stop / next / previous 等），它是"把媒体键派发给系统"，由系统路由给当前媒体会话，所以不碰第三方控制权限，Android 13+ 也拦不住。
+
+### 7.2 Shizuku 安装与授权（用户操作，约 2 分钟）
+
+1. 下载安装 Shizuku：
+   - 官方 GitHub Releases：<https://github.com/RikkaApps/Shizuku/releases>（下最新 `app-release.apk`）
+   - 或 Google Play 搜索 Shizuku（免费），或 F-Droid。
+2. 开启「开发者选项」：设置 → 关于手机 → 连续点「版本号」7 次，直到提示已进入开发者模式。
+3. 在「开发者选项」里开启「无线调试」（Android 11+；Android 10 及以下需用 USB 连电脑 adb 启动）。
+4. 打开 Shizuku App，点「通过无线调试启动」→ 按引导进入系统「无线调试」→ 点「使用配对码配对设备」→ 记下 6 位配对码。
+5. 下拉通知栏，在 Shizuku 的通知里输入这 6 位配对码，完成配对。
+6. 回到 Shizuku 点「启动」，状态变「运行中」即成功。
+7. 之后在手机 App 里同意使用 Shizuku 授权。
+
+> 重启手机后 Shizuku 会显示"未运行"：不用重装，重复第 3~6 步重新激活即可（约 30 秒）。
+
+### 7.3 手机 App 集成与坑
+
+1. 集成：手机端用 **Shizuku SDK**（`dev.rikka.shizuku`）绑定服务后执行 shell 命令；或退而求其次用 Shizuku 官方命令行工具 `rish` 跑 `input keyevent`。
+2. **手机重启后无线调试授权会失效**，App 要能检测 Shizuku 服务状态并提示用户重新激活。
+3. 部分厂商 ROM（MIUI / ColorOS / Flyme）可能杀 Shizuku 后台或限制无线调试，需把 Shizuku 加入电池优化白名单、关闭相关限制。
+4. Android 14 起前台服务要声明服务类型（写服务时一并处理），否则后台监听会被杀。
 
 ---
 

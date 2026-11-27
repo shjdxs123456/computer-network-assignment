@@ -18,7 +18,7 @@
 | 手机端技术栈 | Kotlin + Android 原生（Android Studio 工程） |
 | 耳机切换策略 | 只做"静音 + 让播放器暂停"，切换交给耳机固件 |
 | 优先级表 | JSON 配置文件，手工编辑；GUI 表格列为"待完成" |
-| 首版范围 | 只做 MediaSession 监听，不做 Shizuku / MixedAudio |
+| 首版范围 | 手机端用 **Shizuku** 获得 shell 权限，读/控第三方 App 播放（Android 13+ 封死了直接调 MediaSession 暂停） |
 
 ---
 
@@ -67,13 +67,13 @@
    └─ app/
       ├─ build.gradle.kts     # 依赖、minSdk、targetSdk
       └─ src/main/
-         ├─ AndroidManifest.xml              # 权限声明：前台服务、通知使用权、网络权限
+         ├─ AndroidManifest.xml              # 权限声明：前台服务、网络权限、Shizuku API
          ├─ java/com/example/btswitch/
-         │  ├─ MainActivity.kt               # 2.5 最小状态页：连接状态、当前决策、权限申请入口
+         │  ├─ MainActivity.kt               # 2.5 最小状态页：连接状态、当前决策、Shizuku 授权入口
          │  ├─ PlaybackService.kt            # 2.1 前台服务 + 常驻通知（保证后台存活）
-         │  ├─ MediaSessionWatcher.kt        # 2.2 用 MediaSessionManager 取活跃会话，判断是否在播
+         │  ├─ MediaSessionWatcher.kt        # 2.2 经 Shizuku 用 shell 命令读活跃会话，判断是否在播
          │  ├─ NetClient.kt                  # 2.3 与电脑建立连接、上报在播包名、接收指令
-         │  └─ CommandHandler.kt             # 2.4 收到暂停指令后调 transportControls.pause()
+         │  └─ CommandHandler.kt             # 2.4 收到暂停指令后经 Shizuku 执行 shell 命令暂停
          └─ res/
             ├─ layout/activity_main.xml      # 状态页布局
             └─ values/strings.xml
@@ -82,7 +82,7 @@
 **约定**
 - 目录结构与任务编号一一对应：`1.x` 落在 `computer/`，`2.x` 落在 `phone/`。
 - 每个文件只承担一件事，文件名即职责，不给"综合工具类"。
-- 电脑端不写入网络库以外的第三方依赖；手机端只用 Android 官方 API，不引第三方库。
+- 电脑端不写入网络库以外的第三方依赖；手机端集成 **Shizuku SDK**（`dev.rikka.shizuku`）来获得 shell 权限。
 
 ---
 
@@ -94,7 +94,7 @@
 | --- | --- |
 | 电脑端代码在哪写、在哪跑？ | 都在你的 Windows 电脑上，Python 直接运行，**不需要**任何虚拟硬件。 |
 | 手机端代码在哪写？ | **还是在电脑上写**，用 Android Studio 写 + 编译。手机上不装开发环境。 |
-| 手机需要做什么准备？ | 只有三件事：开"开发者选项 / USB 调试"、"通知使用权"、"关掉电池优化"。 |
+| 手机需要做什么准备？ | 三件事：装 **Shizuku** + 开"无线调试"配对、开"USB 调试"（装 app 用）、"关掉电池优化"。 |
 | 能不能先不碰手机？ | 可以。先做电脑端 + `fake_phone.py` 假手机脚本，把"决策 + 静音 + 恢复"全部验证完，再动手机端。 |
 
 ### 4.2 电脑端环境
@@ -114,9 +114,9 @@
 1. 在电脑上安装 **Android Studio**（自带 JDK，不需要单独装 Java）。
 2. 手机开启：设置 → 关于手机 → 连点"版本号"7 次 → 开发者选项 → 打开"USB 调试"。
 3. 数据线连电脑，Android Studio 里能识别到设备即可运行调试；也可用"无线调试"。
-4. 装好 app 后，手动在系统设置里授予：
-   - **通知使用权**（读取 MediaSession 的硬性前提，没有它一个播放器都读不到）；
-   - 关闭该 app 的电池优化 / 加入自启动白名单（国产 ROM 必做，否则后台监听会被杀）。
+4. 装好 app 后，手动完成：
+   - 安装 **Shizuku** 并完成一次「无线调试」配对（获得 shell 权限，读/控播放的硬性前提，步骤见 phone/README.md 第 7 节）；
+   - 关闭该 app 与 Shizuku 的电池优化 / 加入自启动白名单（国产 ROM 必做，否则后台监听会被杀）。
 
 > 注意：Android 14 起前台服务必须声明服务类型，2.1 写服务时会一并处理，不需要你现在操心。
 
